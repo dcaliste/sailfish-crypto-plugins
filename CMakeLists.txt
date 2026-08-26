@@ -21,6 +21,7 @@ pkg_check_modules(SECRETS sailfishsecrets sailfishcrypto IMPORTED_TARGET REQUIRE
 pkg_check_modules(QMF QmfClient IMPORTED_TARGET REQUIRED)
 pkg_check_modules(RNP librnp IMPORTED_TARGET REQUIRED)
 
+add_subdirectory(secrets)
 add_subdirectory(qmf)
 
 feature_summary(WHAT ALL FATAL_ON_MISSING_REQUIRED_PACKAGES)
