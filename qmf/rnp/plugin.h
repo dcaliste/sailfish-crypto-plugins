@@ -8,8 +8,6 @@
 #ifndef PLUGIN_H
 #define PLUGIN_H
 
-#include "rnp_p.h"
-
 #include <QObject>
 
 #include <QMailMessage>
@@ -40,8 +38,6 @@ private:
                                                   const QStringList &keys,
                                                   QByteArray *signedData,
                                                   QByteArray *micalg) const;
-
-    Rnp m_rnp;
 };
 
 #endif
