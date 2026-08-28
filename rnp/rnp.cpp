@@ -127,9 +127,9 @@ Rnp::Rnp(Rnp::Format format)
 
 Rnp::~Rnp()
 {
-    rnp_ffi_destroy(m_ffi);
     delete m_publicKeyring;
     delete m_secretKeyring;
+    rnp_ffi_destroy(m_ffi);
 }
 
 Rnp::Keyring& Rnp::publicKeyring() const
