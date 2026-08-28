@@ -335,6 +335,8 @@ QList<Rnp::Signature> Rnp::verify(const QByteArray &data, const QByteArray &sign
         qCWarning(lcRnp) << "cannot create memory buffer from signature." << res;
         goto out;
     }
+    if (!m_publicKeyring)
+        m_publicKeyring = new Keyring(this, Keyring::PUBLIC);
     if ((res = rnp_op_verify_detached_create(&op, m_ffi, in, sig))) {
         qCWarning(lcRnp) << "cannot create a verify operation." << res;
         goto out;
