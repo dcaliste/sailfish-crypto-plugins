@@ -81,7 +81,7 @@ QMailCrypto::VerificationResult QMailCryptoRNP::verifySignature(const QMailMessa
                                                   signature.body().data(QMailMessageBody::Decoded));
     result.summary = sigs.length() > 0 ? QMailCrypto::SignatureValid : QMailCrypto::BadSignature;
     for (const Rnp::Signature &sig : sigs) {
-        result.keyResults.append(QMailCrypto::KeyResult(sig.fingerprint,
+        result.keyResults.append(QMailCrypto::KeyResult(sig.fingerprint.isEmpty() ? sig.keyid : sig.fingerprint,
                                                         toSignatureResult(sig.status),
                                                         QVariantMap()));
         if (sig.status != Rnp::Signature::VALID)
