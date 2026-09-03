@@ -31,7 +31,6 @@ static bool unlock(rnp_ffi_t        ffi,
     Q_UNUSED(ffi);
     Q_UNUSED(app_ctx);
 
-    QByteArray passphrase;
     QString fp;
     char *fprint = nullptr;
     if (rnp_key_get_fprint(key, &fprint) == RNP_SUCCESS) {
@@ -84,10 +83,11 @@ static bool unlock(rnp_ffi_t        ffi,
     request.startRequest();
     request.waitForFinished();
     if (request.result().code() == Sailfish::Secrets::Result::Succeeded) {
-        passphrase = request.userInput();
+        QByteArray passphrase = request.userInput();
         if ((size_t)passphrase.length() < buf_len) {
             memcpy(buf, passphrase.data(), passphrase.length() + 1);
         }
+        passphrase.fill('x'); // Erase the passphrase from memory.
         // if (useCache && cacheId.isValid() && ensureCacheCollection()) {
         //     Sailfish::Secrets::StoreSecretRequest store;
         //     // store.setInteractionParameters(uiParams);
