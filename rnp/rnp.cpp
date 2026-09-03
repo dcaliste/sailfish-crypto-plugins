@@ -30,10 +30,15 @@ static bool unlock(rnp_ffi_t        ffi,
 {
     Q_UNUSED(ffi);
     Q_UNUSED(app_ctx);
-    Q_UNUSED(key);
 
     QByteArray passphrase;
-    qCDebug(lcRnp) << "needing a password for context" << pgp_context;
+    QString fp;
+    char *fprint = nullptr;
+    if (rnp_key_get_fprint(key, &fprint) == RNP_SUCCESS) {
+        fp = QString::fromLatin1(fprint);
+        rnp_buffer_destroy(fprint);
+    }
+    qCDebug(lcRnp) << "needing a password for key" << fp << " within context" << pgp_context;
 
     Sailfish::Secrets::SecretManager secretManager;
 
@@ -62,9 +67,9 @@ static bool unlock(rnp_ffi_t        ffi,
 
     Sailfish::Secrets::InteractionParameters::PromptText prompt;
     if (!strcmp(pgp_context, "sign"))
-        prompt.setInstruction(QStringLiteral("Unlock key to sign"));
+        prompt.setInstruction(QStringLiteral("Unlock key %1 to sign").arg(fp.right(8)));
     else if (!strcmp(pgp_context, "decrypt"))
-        prompt.setInstruction(QStringLiteral("Unlock key to decrypt"));
+        prompt.setInstruction(QStringLiteral("Unlock key %1 to decrypt").arg(fp.right(8)));
 
     Sailfish::Secrets::InteractionParameters uiParams;
     uiParams.setPromptText(prompt);
