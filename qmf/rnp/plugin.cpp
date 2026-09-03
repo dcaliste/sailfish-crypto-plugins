@@ -214,9 +214,8 @@ QMailCrypto::DecryptionResult QMailCryptoRNP::decrypt(QMailMessagePartContainer 
 
 void QMailCryptoRNP::setPassphraseCallback(QMailCrypto::PassphraseCallback cb)
 {
-    Q_UNUSED(cb);
-
-    qCWarning(lcRnp) << "passphrase callback not implemented.";
+    if (cb)
+        qCWarning(lcRnp) << "passphrase callback not implemented.";
 }
 
 QString QMailCryptoRNP::passphraseCallback(const QString &info) const
