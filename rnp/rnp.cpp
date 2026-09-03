@@ -446,6 +446,7 @@ QByteArray Rnp::decrypt(const QByteArray &data, QList<Rnp::Signature> *signers) 
     rnp_input_t in = nullptr;
     rnp_output_t out = nullptr;
     rnp_op_verify_t op = nullptr;
+    rnp_recipient_handle_t user = nullptr;
     rnp_result_t res;
 
     qCDebug(lcRnp) << "calling decrypt().";
@@ -460,19 +461,19 @@ QByteArray Rnp::decrypt(const QByteArray &data, QList<Rnp::Signature> *signers) 
     if (!m_secretKeyring)
         m_secretKeyring = new Keyring(this, Keyring::SECRET);
     qCDebug(lcRnp) << "Starting decrypting operation.";
+    if ((res = rnp_op_verify_create(&op, m_ffi, in, out))) {
+        qCWarning(lcRnp) << "cannot create a verify operation." << res;
+        goto out;
+    }
+    uint8_t *buf;
+    size_t len;
+    if ((res = rnp_op_verify_execute(op))
+        || (res = rnp_output_memory_get_buf(out, &buf, &len, false))) {
+        qCWarning(lcRnp) << "cannot decrypt or retrieve output." << res;
+        goto out;
+    }
+    ret = QByteArray((char*)buf, len);
     if (signers) {
-        if ((res = rnp_op_verify_create(&op, m_ffi, in, out))) {
-            qCWarning(lcRnp) << "cannot create a verify operation." << res;
-            goto out;
-        }
-        uint8_t *buf;
-        size_t len;
-        if ((res = rnp_op_verify_execute(op))
-            || (res = rnp_output_memory_get_buf(out, &buf, &len, false))) {
-            qCWarning(lcRnp) << "cannot decrypt or retrieve output." << res;
-            goto out;
-        }
-        ret = QByteArray((char*)buf, len);
         if (rnp_op_verify_get_signature_count(op, &len) == RNP_SUCCESS) {
             for (size_t i = 0; i < len; i++) {
                 rnp_op_verify_signature_t vsig = nullptr;
@@ -481,15 +482,14 @@ QByteArray Rnp::decrypt(const QByteArray &data, QList<Rnp::Signature> *signers) 
                 }
             }
         }
-    } else {
-        uint8_t *buf;
-        size_t len;
-        if ((res = rnp_decrypt(m_ffi, in, out))
-            || (res = rnp_output_memory_get_buf(out, &buf, &len, false))) {
-            qCWarning(lcRnp) << "cannot decrypt or retrieve output." << res;
-            goto out;
+    }
+    if (rnp_op_verify_get_used_recipient(op, &user) == RNP_SUCCESS) {
+        char *keyid = nullptr;
+        if (rnp_recipient_get_keyid(user, &keyid) == RNP_SUCCESS) {
+            Key key(this, "keyid", QString::fromLatin1(keyid));
+            rnp_buffer_destroy(keyid);
+            qCDebug(lcRnp) << "used key for decryption" << key.fingerprint();
         }
-        ret = QByteArray((char*)buf, len);
     }
  out:
     if (in)
