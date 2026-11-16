@@ -10,6 +10,7 @@
 #include <rnp/rnp_err.h>
 
 #include <QDir>
+#include <QFile>
 #include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -746,6 +747,12 @@ Rnp::Keyring::Keyring(const Rnp *rnp, Rnp::Keyring::Level level)
     const char *format = RNP_KEYSTORE_KBX;
     if (rnp->m_format == GPG_COMPAT) {
         format = RNP_KEYSTORE_GPG;
+    }
+
+    // A missing keyring file is an empty keyring.
+    if (!QFile::exists(level == PUBLIC ? rnp->m_publicKeyPath : rnp->m_secretKeyPath)) {
+        m_valid = true;
+        return;
     }
 
     rnp_input_t keyin = nullptr;

@@ -77,6 +77,7 @@ private slots:
     void cleanup();
 
     void loadPlugin();
+    void missingKeyrings();
     void emptyKeyrings();
     void generatedKey();
     void subkeyReference();
@@ -156,6 +157,16 @@ void tst_Rnp::loadPlugin()
     QVERIFY(crypto);
     QCOMPARE(crypto->name(), QStringLiteral("org.sailfishos.crypto.plugin.rnp.test"));
     QVERIFY(qobject_cast<Secrets::EncryptedStoragePlugin*>(plugin));
+}
+
+void tst_Rnp::missingKeyrings()
+{
+    QVERIFY(QDir(m_home->path()).rmdir(QStringLiteral(".gnupg")));
+
+    Plugin plugin;
+    QStringList names;
+    QCOMPARE(plugin.collectionNames(&names).code(), Secrets::Result::Succeeded);
+    QCOMPARE(names, QStringList() << QStringLiteral("import"));
 }
 
 void tst_Rnp::emptyKeyrings()
