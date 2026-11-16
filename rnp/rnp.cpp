@@ -129,8 +129,8 @@ Rnp::Rnp(Rnp::Format format)
     } else {
         rnp_ffi_create(&m_ffi, RNP_KEYSTORE_KBX, RNP_KEYSTORE_KBX);
         m_keyringPath = QDir::home().absoluteFilePath(".rnp");
-        m_publicKeyPath = QDir::home().absoluteFilePath(".gnupg/pubring.kbx");
-        m_secretKeyPath = QDir::home().absoluteFilePath(".gnupg/secring.kbx");
+        m_publicKeyPath = QDir::home().absoluteFilePath(".rnp/pubring.kbx");
+        m_secretKeyPath = QDir::home().absoluteFilePath(".rnp/secring.kbx");
     }
     rnp_ffi_set_pass_provider(m_ffi, unlock, this);
 }

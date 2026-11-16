@@ -172,17 +172,17 @@ QByteArray tst_RnpPlugin::exportedKey(bool ed25519, QString *id, QStringList *fi
     return data;
 }
 
-// The fingerprints of the keys in a keyring file in ~/.gnupg.
+// The fingerprints of the keys in a keyring file in ~/.rnp.
 QStringList tst_RnpPlugin::savedFingerprints(const QString &fileName, uint32_t flags)
 {
     QStringList fps;
     rnp_ffi_t ffi = nullptr;
     rnp_input_t in = nullptr;
     rnp_identifier_iterator_t it = nullptr;
-    const QString path = m_home->path() + QStringLiteral("/.gnupg/") + fileName;
-    if (rnp_ffi_create(&ffi, RNP_KEYSTORE_GPG, RNP_KEYSTORE_GPG) == RNP_SUCCESS
+    const QString path = m_home->path() + QStringLiteral("/.rnp/") + fileName;
+    if (rnp_ffi_create(&ffi, RNP_KEYSTORE_KBX, RNP_KEYSTORE_KBX) == RNP_SUCCESS
         && rnp_input_from_path(&in, path.toLocal8Bit().constData()) == RNP_SUCCESS
-        && rnp_load_keys(ffi, RNP_KEYSTORE_GPG, in, flags) == RNP_SUCCESS
+        && rnp_load_keys(ffi, RNP_KEYSTORE_KBX, in, flags) == RNP_SUCCESS
         && rnp_identifier_iterator_create(ffi, &it, "fingerprint") == RNP_SUCCESS) {
         const char *fp = nullptr;
         while (rnp_identifier_iterator_next(it, &fp) == RNP_SUCCESS && fp)
@@ -238,9 +238,9 @@ void tst_RnpPlugin::importUseRemove()
         const Crypto::Key imported = isr.importedKeyReference();
         QCOMPARE(imported.name(), fingerprints.at(0));
         QCOMPARE(imported.collectionName(), id);
-        const QStringList pub = savedFingerprints(QStringLiteral("pubring.gpg"),
+        const QStringList pub = savedFingerprints(QStringLiteral("pubring.kbx"),
                                                   RNP_LOAD_SAVE_PUBLIC_KEYS);
-        const QStringList sec = savedFingerprints(QStringLiteral("secring.gpg"),
+        const QStringList sec = savedFingerprints(QStringLiteral("secring.kbx"),
                                                   RNP_LOAD_SAVE_SECRET_KEYS);
         for (const QString &fp : fingerprints) {
             QVERIFY(pub.contains(fp));
@@ -337,9 +337,9 @@ void tst_RnpPlugin::importUseRemove()
         dcr.startRequest();
         QTRY_COMPARE_WITH_TIMEOUT(dcr.status(), Secrets::Request::Finished, TIMEOUT);
         QCOMPARE(dcr.result().code(), Secrets::Result::Succeeded);
-        const QStringList pub = savedFingerprints(QStringLiteral("pubring.gpg"),
+        const QStringList pub = savedFingerprints(QStringLiteral("pubring.kbx"),
                                                   RNP_LOAD_SAVE_PUBLIC_KEYS);
-        const QStringList sec = savedFingerprints(QStringLiteral("secring.gpg"),
+        const QStringList sec = savedFingerprints(QStringLiteral("secring.kbx"),
                                                   RNP_LOAD_SAVE_SECRET_KEYS);
         for (const QString &fp : fingerprints) {
             QVERIFY(!pub.contains(fp));
