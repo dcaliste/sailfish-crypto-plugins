@@ -225,6 +225,11 @@ Result RnpKeys::removeSecret(const QString &collectionName,
     if (!m_rnp->publicKeyring().isValid())
         return Result(Result::DatabaseError,
                       QStringLiteral("failed to open keyring at path '%1'.").arg(m_rnp->publicKeyring().path()));
+    // Loaded, so that the secret key is removed too.
+    if (!m_rnp->secretKeyring().isValid())
+        return Result(Result::DatabaseError,
+                      QStringLiteral("failed to open keyring at path '%1'.")
+                      .arg(m_rnp->secretKeyring().path()));
 
     Rnp::Key key = m_rnp->publicKeyring().key(collectionName);
     if (!key.isValid()) {
@@ -243,6 +248,11 @@ Result RnpKeys::removeSecret(const QString &collectionName,
             return Result(Result::DatabaseError,
                           QStringLiteral("cannot delete subkey %1.").arg(secretName));
         }
+    }
+    // The daemon does not destroy its plugins, so the keyrings are saved now.
+    if (!m_rnp->publicKeyring().save() || !m_rnp->secretKeyring().save()) {
+        return Result(Result::DatabaseError,
+                      QStringLiteral("cannot save keyrings."));
     }
     return Result();
 }

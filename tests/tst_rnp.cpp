@@ -90,6 +90,8 @@ private slots:
     void verifySubkeySignature();
     void keyringSaved_data();
     void keyringSaved();
+    void removalSaved_data();
+    void removalSaved();
 
 private:
     bool saveKeyring(rnp_ffi_t ffi, const QString &fileName, const char *format, uint32_t flags);
@@ -419,6 +421,56 @@ void tst_Rnp::keyringSaved()
     QCOMPARE(savedFingerprints(QStringLiteral("pubring.gpg"), RNP_LOAD_SAVE_PUBLIC_KEYS), saved);
     QCOMPARE(QFile::permissions(path), QFile::ReadOwner | QFile::WriteOwner
              | QFile::ReadUser | QFile::WriteUser);
+}
+
+void tst_Rnp::removalSaved_data()
+{
+    QTest::addColumn<bool>("subkey");
+
+    QTest::newRow("key") << false;
+    QTest::newRow("subkey") << true;
+}
+
+// The keyring files change while the plugin is still alive; the second key stays.
+void tst_Rnp::removalSaved()
+{
+    QFETCH(bool, subkey);
+
+    rnp_ffi_t ffi = nullptr;
+    QCOMPARE(rnp_ffi_create(&ffi, RNP_KEYSTORE_GPG, RNP_KEYSTORE_GPG), rnp_result_t(RNP_SUCCESS));
+    QString id;
+    QStringList fingerprints;
+    const QStringList users = QStringList() << QStringLiteral("First <first@example.invalid>")
+                                            << QStringLiteral("Second <second@example.invalid>");
+    for (const QString &user : users) {
+        rnp_key_handle_t primary = nullptr;
+        QCOMPARE(rnp_generate_key_rsa(ffi, 2048, 2048, user.toUtf8().constData(),
+                                      nullptr, &primary),
+                 rnp_result_t(RNP_SUCCESS));
+        rnp_key_handle_t sub = nullptr;
+        QCOMPARE(rnp_key_get_subkey_at(primary, 0, &sub), rnp_result_t(RNP_SUCCESS));
+        if (id.isEmpty())
+            id = keyid(primary);
+        fingerprints << fingerprint(primary) << fingerprint(sub);
+        rnp_key_handle_destroy(sub);
+        rnp_key_handle_destroy(primary);
+    }
+    QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/pubring.gpg"),
+                        RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_PUBLIC_KEYS));
+    QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/secring.gpg"),
+                        RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_SECRET_KEYS));
+    rnp_ffi_destroy(ffi);
+
+    Plugin plugin;
+    QCOMPARE(plugin.removeSecret(id, subkey ? fingerprints.at(1) : QString()).code(),
+             Secrets::Result::Succeeded);
+    QStringList remaining = fingerprints.mid(2);
+    if (subkey)
+        remaining.prepend(fingerprints.at(0));
+    QCOMPARE(savedFingerprints(QStringLiteral("pubring.gpg"), RNP_LOAD_SAVE_PUBLIC_KEYS),
+             remaining);
+    QCOMPARE(savedFingerprints(QStringLiteral("secring.gpg"), RNP_LOAD_SAVE_SECRET_KEYS),
+             remaining);
 }
 
 QTEST_GUILESS_MAIN(tst_Rnp)

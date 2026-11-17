@@ -784,41 +784,53 @@ static bool appendTo(void *app_ctx, const void *buf, size_t len)
 Rnp::Keyring::~Keyring()
 {
     if (m_modified) {
-        const char *format = RNP_KEYSTORE_KBX;
-        if (m_rnp->m_format == GPG_COMPAT) {
-            format = RNP_KEYSTORE_GPG;
-        }
-
-        uint32_t flags = m_level == PUBLIC ? RNP_LOAD_SAVE_PUBLIC_KEYS : RNP_LOAD_SAVE_SECRET_KEYS;
-        QByteArray data;
-        rnp_output_t keyout = nullptr;
-        if (rnp_output_to_callback(&keyout, appendTo, nullptr, &data) == RNP_SUCCESS) {
-            const rnp_result_t res = rnp_save_keys(m_rnp->m_ffi, format, keyout, flags);
-            rnp_output_destroy(keyout);
-            // librnp takes a short write to a file for success, so the file
-            // is written here; on failure it stays as it was. commit() in
-            // Qt 5.6 does not see a failed flush, so flush() is checked.
-            // A new file is private, as librnp creates it.
-            const QString path = m_level == PUBLIC
-                ? m_rnp->m_publicKeyPath : m_rnp->m_secretKeyPath;
-            const bool exists = QFile::exists(path);
-            QSaveFile file(path);
-            if (res != RNP_SUCCESS
-                || !file.open(QIODevice::WriteOnly)
-                || (!exists && !file.setPermissions(QFileDevice::ReadOwner
-                                                    | QFileDevice::WriteOwner))
-                || file.write(data) != data.size()
-                || !file.flush()
-                || !file.commit()) {
-                qCWarning(lcRnp) << "cannot save keyring" << file.fileName() << res
-                                 << file.errorString();
-            }
-        }
+        save();
     }
     if (m_valid) {
         uint32_t flags = m_level == PUBLIC ? RNP_KEY_UNLOAD_PUBLIC : RNP_KEY_UNLOAD_SECRET;
         rnp_unload_keys(m_rnp->m_ffi, flags);
     }
+}
+
+bool Rnp::Keyring::save()
+{
+    const char *format = RNP_KEYSTORE_KBX;
+    if (m_rnp->m_format == GPG_COMPAT) {
+        format = RNP_KEYSTORE_GPG;
+    }
+
+    uint32_t flags = m_level == PUBLIC ? RNP_LOAD_SAVE_PUBLIC_KEYS : RNP_LOAD_SAVE_SECRET_KEYS;
+    QByteArray data;
+    rnp_output_t keyout = nullptr;
+    bool saved = false;
+    if (rnp_output_to_callback(&keyout, appendTo, nullptr, &data) == RNP_SUCCESS) {
+        const rnp_result_t res = rnp_save_keys(m_rnp->m_ffi, format, keyout, flags);
+        rnp_output_destroy(keyout);
+        // librnp takes a short write to a file for success, so the file
+        // is written here; on failure it stays as it was. commit() in
+        // Qt 5.6 does not see a failed flush, so flush() is checked.
+        // A new file is private, as librnp creates it.
+        const QString path = m_level == PUBLIC
+            ? m_rnp->m_publicKeyPath : m_rnp->m_secretKeyPath;
+        const bool exists = QFile::exists(path);
+        QSaveFile file(path);
+        if (res != RNP_SUCCESS
+            || !file.open(QIODevice::WriteOnly)
+            || (!exists && !file.setPermissions(QFileDevice::ReadOwner
+                                                | QFileDevice::WriteOwner))
+            || file.write(data) != data.size()
+            || !file.flush()
+            || !file.commit()) {
+            qCWarning(lcRnp) << "cannot save keyring" << file.fileName() << res
+                             << file.errorString();
+        } else {
+            saved = true;
+        }
+    }
+    if (saved)
+        m_modified = false;
+
+    return saved;
 }
 
 bool Rnp::Keyring::isValid() const
