@@ -460,6 +460,8 @@ QByteArray Rnp::decrypt(const QByteArray &data, QList<Rnp::Signature> *signers) 
         qCWarning(lcRnp) << "cannot create memory buffer for output." << res;
         goto out;
     }
+    if (!m_publicKeyring)
+        m_publicKeyring = new Keyring(this, Keyring::PUBLIC);
     if (!m_secretKeyring)
         m_secretKeyring = new Keyring(this, Keyring::SECRET);
     qCDebug(lcRnp) << "Starting decrypting operation.";

@@ -81,6 +81,7 @@ private slots:
     void generatedKey();
     void subkeyReference();
     void removeKey();
+    void decryptSignedByPublicKey();
 
 private:
     bool saveKeyring(rnp_ffi_t ffi, const QString &fileName, const char *format, uint32_t flags);
@@ -217,6 +218,58 @@ void tst_Rnp::removeKey()
     QStringList names;
     QCOMPARE(plugin.collectionNames(&names).code(), Secrets::Result::Succeeded);
     QCOMPARE(names, QStringList() << QStringLiteral("import"));
+}
+
+// The signer of the message has only its public key in the keyring.
+void tst_Rnp::decryptSignedByPublicKey()
+{
+    rnp_ffi_t ffi = nullptr;
+    QCOMPARE(rnp_ffi_create(&ffi, RNP_KEYSTORE_GPG, RNP_KEYSTORE_GPG), rnp_result_t(RNP_SUCCESS));
+    rnp_key_handle_t recipient = nullptr;
+    QCOMPARE(rnp_generate_key_rsa(ffi, 2048, 2048, "Recipient <recipient@example.invalid>",
+                                  nullptr, &recipient),
+             rnp_result_t(RNP_SUCCESS));
+    rnp_key_handle_t signer = nullptr;
+    QCOMPARE(rnp_generate_key_rsa(ffi, 2048, 0, "Signer <signer@example.invalid>",
+                                  nullptr, &signer),
+             rnp_result_t(RNP_SUCCESS));
+
+    const QByteArray plaintext("signed and encrypted");
+    rnp_input_t in = nullptr;
+    QCOMPARE(rnp_input_from_memory(&in, (const uint8_t*)plaintext.data(),
+                                   plaintext.length(), false),
+             rnp_result_t(RNP_SUCCESS));
+    rnp_output_t out = nullptr;
+    QCOMPARE(rnp_output_to_memory(&out, 0), rnp_result_t(RNP_SUCCESS));
+    rnp_op_encrypt_t op = nullptr;
+    QCOMPARE(rnp_op_encrypt_create(&op, ffi, in, out), rnp_result_t(RNP_SUCCESS));
+    QCOMPARE(rnp_op_encrypt_add_recipient(op, recipient), rnp_result_t(RNP_SUCCESS));
+    QCOMPARE(rnp_op_encrypt_add_signature(op, signer, nullptr), rnp_result_t(RNP_SUCCESS));
+    QCOMPARE(rnp_op_encrypt_execute(op), rnp_result_t(RNP_SUCCESS));
+    uint8_t *buf = nullptr;
+    size_t len = 0;
+    QCOMPARE(rnp_output_memory_get_buf(out, &buf, &len, false), rnp_result_t(RNP_SUCCESS));
+    const QByteArray message((char*)buf, len);
+    rnp_op_encrypt_destroy(op);
+    rnp_output_destroy(out);
+    rnp_input_destroy(in);
+
+    const QString signerId = keyid(signer);
+    QCOMPARE(rnp_key_remove(signer, RNP_KEY_REMOVE_SECRET), rnp_result_t(RNP_SUCCESS));
+    rnp_key_handle_destroy(signer);
+    rnp_key_handle_destroy(recipient);
+    QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/pubring.gpg"),
+                        RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_PUBLIC_KEYS));
+    QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/secring.gpg"),
+                        RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_SECRET_KEYS));
+    rnp_ffi_destroy(ffi);
+
+    Plugin plugin;
+    QList<Rnp::Signature> signatures;
+    QCOMPARE(plugin.m_rnp.decrypt(message, &signatures), plaintext);
+    QCOMPARE(signatures.size(), 1);
+    QCOMPARE(signatures.at(0).status, Rnp::Signature::VALID);
+    QCOMPARE(signatures.at(0).keyid, signerId);
 }
 
 QTEST_GUILESS_MAIN(tst_Rnp)
