@@ -81,7 +81,8 @@ private slots:
     void generatedKey();
     void subkeyReference();
     void removeKey();
-    void decryptSignedByPublicKey();
+    void decryptSigned_data();
+    void decryptSigned();
 
 private:
     bool saveKeyring(rnp_ffi_t ffi, const QString &fileName, const char *format, uint32_t flags);
@@ -220,9 +221,25 @@ void tst_Rnp::removeKey()
     QCOMPARE(names, QStringList() << QStringLiteral("import"));
 }
 
-// The signer of the message has only its public key in the keyring.
-void tst_Rnp::decryptSignedByPublicKey()
+void tst_Rnp::decryptSigned_data()
 {
+    QTest::addColumn<uint>("removal");
+    QTest::addColumn<int>("status");
+
+    QTest::newRow("signer with public key") << uint(RNP_KEY_REMOVE_SECRET)
+                                            << int(Rnp::Signature::VALID);
+    QTest::newRow("unknown signer")
+        << uint(RNP_KEY_REMOVE_PUBLIC | RNP_KEY_REMOVE_SECRET)
+        << int(Rnp::Signature::KEY_NOT_FOUND);
+}
+
+// A message to a stored key, signed by a key whose secret part, or
+// all of it, is removed from the keyrings.
+void tst_Rnp::decryptSigned()
+{
+    QFETCH(uint, removal);
+    QFETCH(int, status);
+
     rnp_ffi_t ffi = nullptr;
     QCOMPARE(rnp_ffi_create(&ffi, RNP_KEYSTORE_GPG, RNP_KEYSTORE_GPG), rnp_result_t(RNP_SUCCESS));
     rnp_key_handle_t recipient = nullptr;
@@ -255,7 +272,7 @@ void tst_Rnp::decryptSignedByPublicKey()
     rnp_input_destroy(in);
 
     const QString signerId = keyid(signer);
-    QCOMPARE(rnp_key_remove(signer, RNP_KEY_REMOVE_SECRET), rnp_result_t(RNP_SUCCESS));
+    QCOMPARE(rnp_key_remove(signer, removal), rnp_result_t(RNP_SUCCESS));
     rnp_key_handle_destroy(signer);
     rnp_key_handle_destroy(recipient);
     QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/pubring.gpg"),
@@ -268,7 +285,7 @@ void tst_Rnp::decryptSignedByPublicKey()
     QList<Rnp::Signature> signatures;
     QCOMPARE(plugin.m_rnp.decrypt(message, &signatures), plaintext);
     QCOMPARE(signatures.size(), 1);
-    QCOMPARE(signatures.at(0).status, Rnp::Signature::VALID);
+    QCOMPARE(int(signatures.at(0).status), status);
     QCOMPARE(signatures.at(0).keyid, signerId);
 }
 

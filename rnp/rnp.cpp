@@ -469,6 +469,10 @@ QByteArray Rnp::decrypt(const QByteArray &data, QList<Rnp::Signature> *signers) 
         qCWarning(lcRnp) << "cannot create a verify operation." << res;
         goto out;
     }
+    if ((res = rnp_op_verify_set_flags(op, RNP_VERIFY_IGNORE_SIGS_ON_DECRYPT))) {
+        qCWarning(lcRnp) << "cannot set verify flags." << res;
+        goto out;
+    }
     uint8_t *buf;
     size_t len;
     if ((res = rnp_op_verify_execute(op))
