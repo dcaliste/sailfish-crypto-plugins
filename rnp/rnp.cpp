@@ -292,7 +292,7 @@ static Rnp::Signature toSignature(rnp_ffi_t ffi, rnp_op_verify_signature_t vsig)
         if (rnp_key_get_primary_fprint(key, &fprint) == RNP_SUCCESS
             && rnp_locate_key(ffi, "fingerprint", fprint, &pkey) == RNP_SUCCESS) {
             char *keyid = nullptr;
-            if (rnp_key_get_keyid(key, &keyid) == RNP_SUCCESS) {
+            if (rnp_key_get_keyid(pkey, &keyid) == RNP_SUCCESS) {
                 id = QString::fromLatin1(keyid);
                 rnp_buffer_destroy(keyid);
             }

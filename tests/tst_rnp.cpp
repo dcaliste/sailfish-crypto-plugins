@@ -83,6 +83,7 @@ private slots:
     void removeKey();
     void decryptSigned_data();
     void decryptSigned();
+    void verifySubkeySignature();
 
 private:
     bool saveKeyring(rnp_ffi_t ffi, const QString &fileName, const char *format, uint32_t flags);
@@ -287,6 +288,53 @@ void tst_Rnp::decryptSigned()
     QCOMPARE(signatures.size(), 1);
     QCOMPARE(int(signatures.at(0).status), status);
     QCOMPARE(signatures.at(0).keyid, signerId);
+}
+
+// A signature by a signing subkey, verified with a reference to its primary key.
+void tst_Rnp::verifySubkeySignature()
+{
+    rnp_ffi_t ffi = nullptr;
+    QCOMPARE(rnp_ffi_create(&ffi, RNP_KEYSTORE_GPG, RNP_KEYSTORE_GPG), rnp_result_t(RNP_SUCCESS));
+    rnp_key_handle_t primary = nullptr;
+    QCOMPARE(rnp_generate_key_rsa(ffi, 2048, 0, "Signer <signer@example.invalid>",
+                                  nullptr, &primary),
+             rnp_result_t(RNP_SUCCESS));
+    rnp_op_generate_t generate = nullptr;
+    QCOMPARE(rnp_op_generate_subkey_create(&generate, ffi, primary, "RSA"),
+             rnp_result_t(RNP_SUCCESS));
+    QCOMPARE(rnp_op_generate_set_bits(generate, 2048), rnp_result_t(RNP_SUCCESS));
+    QCOMPARE(rnp_op_generate_add_usage(generate, "sign"), rnp_result_t(RNP_SUCCESS));
+    QCOMPARE(rnp_op_generate_execute(generate), rnp_result_t(RNP_SUCCESS));
+    rnp_key_handle_t sub = nullptr;
+    QCOMPARE(rnp_op_generate_get_key(generate, &sub), rnp_result_t(RNP_SUCCESS));
+    rnp_op_generate_destroy(generate);
+    const QString id = keyid(primary);
+    const QString primaryFingerprint = fingerprint(primary);
+    const QString subFingerprint = fingerprint(sub);
+    rnp_key_handle_destroy(sub);
+    rnp_key_handle_destroy(primary);
+    QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/pubring.gpg"),
+                        RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_PUBLIC_KEYS));
+    QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/secring.gpg"),
+                        RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_SECRET_KEYS));
+    rnp_ffi_destroy(ffi);
+
+    Plugin plugin;
+    const QByteArray data("signed by a subkey");
+    QByteArray signature;
+    QCOMPARE(plugin.sign(data, Crypto::Key(subFingerprint, id, plugin.name()),
+                         Crypto::CryptoManager::SignaturePaddingNone,
+                         Crypto::CryptoManager::DigestUnknown,
+                         QVariantMap(), &signature).code(),
+             Crypto::Result::Succeeded);
+
+    Crypto::CryptoManager::VerificationStatus status;
+    QCOMPARE(plugin.verify(signature, data, Crypto::Key(primaryFingerprint, id, plugin.name()),
+                           Crypto::CryptoManager::SignaturePaddingNone,
+                           Crypto::CryptoManager::DigestUnknown,
+                           QVariantMap(), &status).code(),
+             Crypto::Result::Succeeded);
+    QCOMPARE(int(status), int(Crypto::CryptoManager::VerificationSucceeded));
 }
 
 QTEST_GUILESS_MAIN(tst_Rnp)
