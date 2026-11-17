@@ -90,6 +90,8 @@ private slots:
     void verifySubkeySignature();
     void keyMetadata_data();
     void keyMetadata();
+    void findSecrets_data();
+    void findSecrets();
     void keyringSaved_data();
     void keyringSaved();
     void removalSaved_data();
@@ -477,6 +479,66 @@ void tst_Rnp::keyMetadata()
     for (const Secrets::Secret::Identifier &identifier : identifiers)
         found = found || identifier.collectionName() == id;
     QVERIFY(found);
+}
+
+void tst_Rnp::findSecrets_data()
+{
+    QTest::addColumn<bool>("all");
+
+    QTest::newRow("named collection") << false;
+    QTest::newRow("import") << true;
+}
+
+// Two keys; the search in the collection of the first finds the first,
+// the search in "import" finds both.
+void tst_Rnp::findSecrets()
+{
+    QFETCH(bool, all);
+
+    rnp_ffi_t ffi = nullptr;
+    QCOMPARE(rnp_ffi_create(&ffi, RNP_KEYSTORE_GPG, RNP_KEYSTORE_GPG), rnp_result_t(RNP_SUCCESS));
+    QStringList ids;
+    QStringList fingerprints;
+    QStringList collections;
+    const QStringList users = QStringList() << QStringLiteral("First <first@example.invalid>")
+                                            << QStringLiteral("Second <second@example.invalid>");
+    for (const QString &user : users) {
+        rnp_key_handle_t primary = nullptr;
+        QCOMPARE(rnp_generate_key_rsa(ffi, 2048, 2048, user.toUtf8().constData(),
+                                      nullptr, &primary),
+                 rnp_result_t(RNP_SUCCESS));
+        rnp_key_handle_t sub = nullptr;
+        QCOMPARE(rnp_key_get_subkey_at(primary, 0, &sub), rnp_result_t(RNP_SUCCESS));
+        ids << keyid(primary);
+        fingerprints << fingerprint(primary) << fingerprint(sub);
+        collections << keyid(primary) << keyid(primary);
+        rnp_key_handle_destroy(sub);
+        rnp_key_handle_destroy(primary);
+    }
+    QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/pubring.gpg"),
+                        RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_PUBLIC_KEYS));
+    QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/secring.gpg"),
+                        RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_SECRET_KEYS));
+    rnp_ffi_destroy(ffi);
+
+    Plugin plugin;
+    QVector<Secrets::Secret::Identifier> identifiers;
+    QCOMPARE(plugin.findSecrets(all ? QStringLiteral("import") : ids.at(0),
+                                Secrets::Secret::FilterData(),
+                                Secrets::StoragePlugin::OperatorAnd, &identifiers).code(),
+             Secrets::Result::Succeeded);
+    QStringList names;
+    QStringList collectionNames;
+    for (const Secrets::Secret::Identifier &identifier : identifiers) {
+        names << identifier.name();
+        collectionNames << identifier.collectionName();
+    }
+    if (!all) {
+        fingerprints = fingerprints.mid(0, 2);
+        collections = collections.mid(0, 2);
+    }
+    QCOMPARE(names, fingerprints);
+    QCOMPARE(collectionNames, collections);
 }
 
 void tst_Rnp::keyringSaved_data()

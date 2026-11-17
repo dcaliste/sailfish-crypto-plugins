@@ -179,12 +179,12 @@ Result RnpKeys::findSecrets(const QString &collectionName,
                       QStringLiteral("failed to open keyring at path '%1'.").arg(m_rnp->publicKeyring().path()));
 
     // Import is a fake collection name to allow to search in every collections.
-    const QStringList ids = collectionName.compare("import") ? m_rnp->publicKeyring().keyids() : (QStringList() << collectionName);
+    const QStringList ids = collectionName.compare("import") ? (QStringList() << collectionName) : m_rnp->publicKeyring().keyids();
     for (const QString &id : ids) {
         Rnp::Key primary = m_rnp->publicKeyring().key(id);
         for (const QString &fp : primary.fingerprints()) {
-            Rnp::Key k = primary.subkey(fp);
-            Sailfish::Crypto::Key key = k.toCryptoKey(name());
+            Sailfish::Crypto::Key key = fp == primary.fingerprint()
+                ? primary.toCryptoKey(name()) : primary.subkey(fp).toCryptoKey(name());
             bool match = false;
             const Sailfish::Crypto::Key::FilterData &keyData = key.filterData();
             switch (filterOperator) {
