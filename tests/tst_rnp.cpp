@@ -88,6 +88,8 @@ private slots:
     void decryptSigned_data();
     void decryptSigned();
     void verifySubkeySignature();
+    void keyMetadata_data();
+    void keyMetadata();
     void keyringSaved_data();
     void keyringSaved();
     void removalSaved_data();
@@ -413,6 +415,68 @@ void tst_Rnp::verifySubkeySignature()
                            QVariantMap(), &status).code(),
              Crypto::Result::Succeeded);
     QCOMPARE(int(status), int(Crypto::CryptoManager::VerificationSucceeded));
+}
+
+void tst_Rnp::keyMetadata_data()
+{
+    QTest::addColumn<uint>("creation");
+    QTest::addColumn<uint>("expiration");
+    QTest::addColumn<QString>("expired");
+
+    QTest::newRow("expiring") << 0u << 365u * 24 * 3600 << QStringLiteral("false");
+    QTest::newRow("not expiring") << 0u << 0u << QStringLiteral("false");
+    // Created on 2020-01-01, valid for one day.
+    QTest::newRow("expired") << 1577836800u << 24u * 3600 << QStringLiteral("true");
+}
+
+// The filter data of a primary key with two user IDs.
+void tst_Rnp::keyMetadata()
+{
+    QFETCH(uint, creation);
+    QFETCH(uint, expiration);
+    QFETCH(QString, expired);
+
+    rnp_ffi_t ffi = nullptr;
+    QCOMPARE(rnp_ffi_create(&ffi, RNP_KEYSTORE_GPG, RNP_KEYSTORE_GPG), rnp_result_t(RNP_SUCCESS));
+    if (creation)
+        QCOMPARE(rnp_set_timestamp(ffi, creation), rnp_result_t(RNP_SUCCESS));
+    rnp_key_handle_t primary = nullptr;
+    QCOMPARE(rnp_generate_key_rsa(ffi, 2048, 2048, "Test <test@example.invalid>",
+                                  nullptr, &primary),
+             rnp_result_t(RNP_SUCCESS));
+    QCOMPARE(rnp_key_add_uid(primary, "other@example.invalid", nullptr, 0, 0, false),
+             rnp_result_t(RNP_SUCCESS));
+    QCOMPARE(rnp_key_set_expiration(primary, expiration), rnp_result_t(RNP_SUCCESS));
+    uint32_t created = 0;
+    QCOMPARE(rnp_key_get_creation(primary, &created), rnp_result_t(RNP_SUCCESS));
+    const QString id = keyid(primary);
+    rnp_key_handle_destroy(primary);
+    QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/pubring.gpg"),
+                        RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_PUBLIC_KEYS));
+    QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/secring.gpg"),
+                        RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_SECRET_KEYS));
+    rnp_ffi_destroy(ffi);
+
+    Plugin plugin;
+    const Crypto::Key key = plugin.m_rnp.publicKeyring().key(id).toCryptoKey(plugin.name());
+    QCOMPARE(key.filterData(QStringLiteral("Expired")), expired);
+    QCOMPARE(key.filterData(QStringLiteral("Creation-Date")),
+             QDateTime::fromTime_t(created).toString());
+    QCOMPARE(key.filterData(QStringLiteral("Expire-Date")),
+             expiration ? QDateTime::fromTime_t(created + expiration).toString() : QString());
+    QCOMPARE(key.filterData(QStringLiteral("User-Emails")),
+             QStringLiteral("test@example.invalid,other@example.invalid"));
+
+    Secrets::Secret::FilterData filter;
+    filter.insert(QStringLiteral("email"), QStringLiteral("test@example.invalid"));
+    QVector<Secrets::Secret::Identifier> identifiers;
+    QCOMPARE(plugin.findSecrets(id, filter, Secrets::StoragePlugin::OperatorAnd,
+                                &identifiers).code(),
+             Secrets::Result::Succeeded);
+    bool found = false;
+    for (const Secrets::Secret::Identifier &identifier : identifiers)
+        found = found || identifier.collectionName() == id;
+    QVERIFY(found);
 }
 
 void tst_Rnp::keyringSaved_data()

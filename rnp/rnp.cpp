@@ -699,27 +699,35 @@ Sailfish::Crypto::Key Rnp::Key::toCryptoKey(const QString &pluginName) const
                 if (rnp_uid_get_type(uid, &type) == RNP_SUCCESS
                     && type == RNP_USER_ID
                     && rnp_key_get_uid_at(m_primary, i, &data) == RNP_SUCCESS) {
-                    // Fix: remove name from data.
-                    emails << QString::fromUtf8(data);
+                    // Keep the address of "Name <address>".
+                    QString email = QString::fromUtf8(data);
+                    const int start = email.lastIndexOf('<');
+                    if (start >= 0 && email.endsWith('>'))
+                        email = email.mid(start + 1, email.length() - start - 2);
+                    if (!email.isEmpty())
+                        emails << email;
                     rnp_buffer_destroy(data);
                 }
             }
         }
     }
     output.setFilterData("User-Emails", emails.join(","));
-    uint32_t expiration = 0;
-    if (rnp_key_get_expiration(m_key, &expiration) == RNP_SUCCESS) {
-        output.setFilterData("Expired", expiration ? "true" : "false");
-        if (expiration) {
-            output.setFilterData("Expire-Date",
-                                 QDateTime::fromMSecsSinceEpoch(expiration).toString());
-        }
+    bool expired = false;
+    if (rnp_key_is_expired(m_key, &expired) == RNP_SUCCESS) {
+        output.setFilterData("Expired", expired ? "true" : "false");
     }
     uint32_t creation;
     if (rnp_key_get_creation(m_key, &creation) == RNP_SUCCESS
         && creation) {
         output.setFilterData("Creation-Date",
-                              QDateTime::fromMSecsSinceEpoch(creation).toString());
+                              QDateTime::fromMSecsSinceEpoch((qint64)creation * 1000).toString());
+        // The expiration is a period from the creation, in seconds.
+        uint32_t expiration = 0;
+        if (rnp_key_get_expiration(m_key, &expiration) == RNP_SUCCESS && expiration) {
+            const qint64 expiry = (qint64)creation + expiration;
+            output.setFilterData("Expire-Date",
+                                 QDateTime::fromMSecsSinceEpoch(expiry * 1000).toString());
+        }
     }
     output.setOrigin(Sailfish::Crypto::Key::OriginUnknown);
     if (rnp_key_get_subkey_count(m_primary, &n) == RNP_SUCCESS) {
