@@ -11,6 +11,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QSaveFile>
 #include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -774,6 +775,12 @@ Rnp::Keyring::Keyring(const Rnp *rnp, Rnp::Keyring::Level level)
         qCWarning(lcRnp) << "cannot load keyring, error code:" << res;
 }
 
+static bool appendTo(void *app_ctx, const void *buf, size_t len)
+{
+    ((QByteArray*)app_ctx)->append((const char*)buf, len);
+    return true;
+}
+
 Rnp::Keyring::~Keyring()
 {
     if (m_modified) {
@@ -783,13 +790,29 @@ Rnp::Keyring::~Keyring()
         }
 
         uint32_t flags = m_level == PUBLIC ? RNP_LOAD_SAVE_PUBLIC_KEYS : RNP_LOAD_SAVE_SECRET_KEYS;
+        QByteArray data;
         rnp_output_t keyout = nullptr;
-        if ((m_level == PUBLIC
-             && rnp_output_to_path(&keyout, m_rnp->m_publicKeyPath.toUtf8().data()) == RNP_SUCCESS)
-            || (m_level == SECRET
-                && rnp_output_to_path(&keyout, m_rnp->m_secretKeyPath.toUtf8().data()) == RNP_SUCCESS)) {
-            rnp_save_keys(m_rnp->m_ffi, format, keyout, flags);
+        if (rnp_output_to_callback(&keyout, appendTo, nullptr, &data) == RNP_SUCCESS) {
+            const rnp_result_t res = rnp_save_keys(m_rnp->m_ffi, format, keyout, flags);
             rnp_output_destroy(keyout);
+            // librnp takes a short write to a file for success, so the file
+            // is written here; on failure it stays as it was. commit() in
+            // Qt 5.6 does not see a failed flush, so flush() is checked.
+            // A new file is private, as librnp creates it.
+            const QString path = m_level == PUBLIC
+                ? m_rnp->m_publicKeyPath : m_rnp->m_secretKeyPath;
+            const bool exists = QFile::exists(path);
+            QSaveFile file(path);
+            if (res != RNP_SUCCESS
+                || !file.open(QIODevice::WriteOnly)
+                || (!exists && !file.setPermissions(QFileDevice::ReadOwner
+                                                    | QFileDevice::WriteOwner))
+                || file.write(data) != data.size()
+                || !file.flush()
+                || !file.commit()) {
+                qCWarning(lcRnp) << "cannot save keyring" << file.fileName() << res
+                                 << file.errorString();
+            }
         }
     }
     if (m_valid) {
