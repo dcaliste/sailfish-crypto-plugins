@@ -43,6 +43,7 @@ class Q_DECL_EXPORT Rnp
         ~Key();
 
         bool isValid() const;
+        bool hasSecret() const;
         QString keyid() const;
         QString fingerprint() const;
         QStringList fingerprints() const;

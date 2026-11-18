@@ -92,6 +92,8 @@ private slots:
     void keyringSaved();
     void removalSaved_data();
     void removalSaved();
+    void storedKey_data();
+    void storedKey();
 
 private:
     bool saveKeyring(rnp_ffi_t ffi, const QString &fileName, const char *format, uint32_t flags);
@@ -471,6 +473,64 @@ void tst_Rnp::removalSaved()
              remaining);
     QCOMPARE(savedFingerprints(QStringLiteral("secring.gpg"), RNP_LOAD_SAVE_SECRET_KEYS),
              remaining);
+}
+
+void tst_Rnp::storedKey_data()
+{
+    QTest::addColumn<int>("index");
+    QTest::addColumn<bool>("secret");
+    QTest::addColumn<QString>("secretKeyring");
+    QTest::addColumn<int>("errorCode");
+
+    const QString kept = QStringLiteral("kept");
+    QTest::newRow("primary") << 0 << false << kept << int(Crypto::Result::NoError);
+    QTest::newRow("subkey") << 1 << false << kept << int(Crypto::Result::NoError);
+    QTest::newRow("secret") << 0 << true << kept << int(Crypto::Result::NoError);
+    QTest::newRow("no secret key") << 0 << true << QStringLiteral("removed")
+                                   << int(Crypto::Result::InvalidKeyIdentifier);
+    QTest::newRow("unreadable keyring") << 0 << true << QStringLiteral("unreadable")
+                                        << int(Crypto::Result::StorageError);
+    QTest::newRow("unknown") << -1 << false << kept
+                             << int(Crypto::Result::InvalidKeyIdentifier);
+}
+
+// The public keyring is loaded first, as the daemon lists the
+// collections when it starts; a key is then found without its
+// secret part when the secret keyring is removed.
+void tst_Rnp::storedKey()
+{
+    QFETCH(int, index);
+    QFETCH(bool, secret);
+    QFETCH(QString, secretKeyring);
+    QFETCH(int, errorCode);
+
+    QString id;
+    QStringList fingerprints;
+    QVERIFY(generateKey(&id, &fingerprints));
+    QFile secring(m_home->path() + QStringLiteral("/.gnupg/secring.gpg"));
+    if (secretKeyring == QStringLiteral("removed")) {
+        QVERIFY(secring.remove());
+    } else if (secretKeyring == QStringLiteral("unreadable")) {
+        QVERIFY(secring.open(QIODevice::WriteOnly));
+        QCOMPARE(secring.write("not a keyring"), qint64(13));
+        secring.close();
+    }
+    const QString fp = index < 0 ? QString(40, QLatin1Char('0')) : fingerprints.at(index);
+
+    Plugin plugin;
+    QStringList names;
+    QCOMPARE(plugin.collectionNames(&names).code(), Secrets::Result::Succeeded);
+    Crypto::Key key;
+    const Crypto::Result result
+        = plugin.storedKey(Crypto::Key::Identifier(fp, id, plugin.name()),
+                           secret ? Crypto::Key::SecretKeyData : Crypto::Key::PublicKeyData,
+                           QVariantMap(), &key);
+    QCOMPARE((int)result.errorCode(), errorCode);
+    if (errorCode == Crypto::Result::NoError) {
+        QCOMPARE(key.name(), fp);
+        QCOMPARE(key.collectionName(), id);
+        QCOMPARE(key.storagePluginName(), plugin.name());
+    }
 }
 
 QTEST_GUILESS_MAIN(tst_Rnp)

@@ -578,6 +578,12 @@ bool Rnp::Key::isValid() const
     return m_key != nullptr;
 }
 
+bool Rnp::Key::hasSecret() const
+{
+    bool secret = false;
+    return m_key && rnp_key_have_secret(m_key, &secret) == RNP_SUCCESS && secret;
+}
+
 QString Rnp::Key::keyid() const
 {
     QString id;

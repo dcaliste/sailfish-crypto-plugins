@@ -474,21 +474,25 @@ Result RnpFfi::storedKey(const Key::Identifier &identifier,
                          const QVariantMap &customParameters,
                          Key *key)
 {
-    // GPGmeContext ctx(m_protocol, customParameters.value("Ephemeral-Home",
-    //                                                     QVariant(QString())).toString());
-    // if (!ctx) {
-    //     return Result(Result::StorageError, ctx.error());
-    // }
+    Q_UNUSED(customParameters);
 
-    // GPGmeKey gkey(ctx, identifier.name(),
-    //               (keyComponents & Key::SecretKeyData)
-    //               ? GPGmeKey::Secret : GPGmeKey::Public);
-    // if (!gkey) {
-    //     return Result(Result::InvalidKeyIdentifier,
-    //                   Sailfish::Secrets::Result::InvalidSecretError,
-    //                   QStringLiteral("cannot retrieve key %1: %2.").arg(identifier.name()).arg(gkey.error()));
-    // }
-    // gkey.toKey(key, name());
+    const bool secret = keyComponents & Key::SecretKeyData;
+    Rnp::Keyring &keyring = secret ? m_rnp->secretKeyring() : m_rnp->publicKeyring();
+    if (!keyring.isValid()) {
+        return Result(Result::StorageError,
+                      QStringLiteral("failed to open keyring at path '%1'.")
+                      .arg(keyring.path()));
+    }
+
+    // librnp looks a key up in both keyrings: the key found may
+    // lack its secret part.
+    Rnp::Key rkey = keyring.fromFingerprint(identifier.name());
+    if (!rkey.isValid() || (secret && !rkey.hasSecret())) {
+        return Result(Result::InvalidKeyIdentifier,
+                      Sailfish::Secrets::Result::InvalidSecretError,
+                      QStringLiteral("cannot retrieve key %1.").arg(identifier.name()));
+    }
+    *key = rkey.toCryptoKey(name());
 
     return Result();
 }
