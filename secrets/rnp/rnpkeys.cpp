@@ -149,17 +149,21 @@ Result RnpKeys::secretNames(const QString &collectionName,
     return Result();
 }
 
+// A key can sign when its usage allows it and its secret part is
+// stored; it can encrypt when its usage allows it.
 static bool matchRule(const Sailfish::Crypto::Key::FilterData &keyData,
-                      Sailfish::Crypto::CryptoManager::Algorithm algorithm,
-                      const QString &filter, const QString &value)
+                      Sailfish::Crypto::CryptoManager::Operations operations,
+                      bool secret, const QString &filter, const QString &value)
 {
     if (filter.compare("email") == 0) {
         return keyData.contains("User-Emails")
             && keyData.value("User-Emails").split(',', QString::SkipEmptyParts).contains(value);
     } else if (filter.compare("canSign") == 0) {
-        return true;
+        const bool can = (operations & Sailfish::Crypto::CryptoManager::OperationSign) && secret;
+        return value.compare(can ? "true" : "false") == 0;
     } else if (filter.compare("canEncrypt") == 0) {
-        return algorithm == Sailfish::Crypto::CryptoManager::AlgorithmUnknown;
+        const bool can = operations & Sailfish::Crypto::CryptoManager::OperationEncrypt;
+        return value.compare(can ? "true" : "false") == 0;
     } else {
         return keyData.contains(filter)
             && (keyData.value(filter).compare(value) == 0);
@@ -177,14 +181,21 @@ Result RnpKeys::findSecrets(const QString &collectionName,
     if (!m_rnp->publicKeyring().isValid())
         return Result(Result::DatabaseError,
                       QStringLiteral("failed to open keyring at path '%1'.").arg(m_rnp->publicKeyring().path()));
+    if (filter.contains("canSign") && !m_rnp->secretKeyring().isValid())
+        return Result(Result::DatabaseError,
+                      QStringLiteral("failed to open keyring at path '%1'.")
+                      .arg(m_rnp->secretKeyring().path()));
 
     // Import is a fake collection name to allow to search in every collections.
     const QStringList ids = collectionName.compare("import") ? (QStringList() << collectionName) : m_rnp->publicKeyring().keyids();
     for (const QString &id : ids) {
         Rnp::Key primary = m_rnp->publicKeyring().key(id);
         for (const QString &fp : primary.fingerprints()) {
-            Sailfish::Crypto::Key key = fp == primary.fingerprint()
-                ? primary.toCryptoKey(name()) : primary.subkey(fp).toCryptoKey(name());
+            const bool isPrimary = fp == primary.fingerprint();
+            const Rnp::Key subkey = isPrimary ? Rnp::Key() : primary.subkey(fp);
+            const Rnp::Key &rkey = isPrimary ? primary : subkey;
+            Sailfish::Crypto::Key key = rkey.toCryptoKey(name());
+            const bool secret = rkey.hasSecret();
             bool match = false;
             const Sailfish::Crypto::Key::FilterData &keyData = key.filterData();
             switch (filterOperator) {
@@ -192,14 +203,16 @@ Result RnpKeys::findSecrets(const QString &collectionName,
                 match = false;
                 for (Secret::FilterData::ConstIterator it = filter.constBegin();
                      it != filter.constEnd() && !match; it++) {
-                    match = matchRule(keyData, key.algorithm(), it.key(), it.value());
+                    match = matchRule(keyData, key.operations(), secret,
+                                      it.key(), it.value());
                 }
                 break;
             case SecretManager::OperatorAnd:
                 match = true;
                 for (Secret::FilterData::ConstIterator it = filter.constBegin();
                      it != filter.constEnd() && match; it++) {
-                    match = matchRule(keyData, key.algorithm(), it.key(), it.value());
+                    match = matchRule(keyData, key.operations(), secret,
+                                      it.key(), it.value());
                 }
                 break;
             }

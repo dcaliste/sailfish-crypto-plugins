@@ -103,6 +103,8 @@ private slots:
     void importFailure_data();
     void importFailure();
     void importCreatesHome();
+    void capabilityFilters_data();
+    void capabilityFilters();
 
 private:
     QByteArray exportedKey(uint flags, QString *id, QStringList *fingerprints);
@@ -816,6 +818,89 @@ void tst_Rnp::importCreatesHome()
     pub.sort();
     imported.sort();
     QCOMPARE(pub, imported);
+}
+
+void tst_Rnp::capabilityFilters_data()
+{
+    QTest::addColumn<QString>("filter");
+    QTest::addColumn<QString>("value");
+    QTest::addColumn<QStringList>("expected");
+
+    QTest::newRow("canSign true") << QStringLiteral("canSign") << QStringLiteral("true")
+                                  << (QStringList() << "rsa" << "ed25519");
+    QTest::newRow("canSign false") << QStringLiteral("canSign") << QStringLiteral("false")
+                                   << (QStringList() << "rsa sub" << "cv25519"
+                                       << "contact" << "contact sub");
+    QTest::newRow("canEncrypt true") << QStringLiteral("canEncrypt") << QStringLiteral("true")
+                                     << (QStringList() << "rsa sub" << "cv25519"
+                                         << "contact sub");
+    QTest::newRow("canEncrypt false") << QStringLiteral("canEncrypt") << QStringLiteral("false")
+                                      << (QStringList() << "rsa" << "ed25519" << "contact");
+}
+
+// Own RSA and Ed25519 keys, and the public key of a contact.
+void tst_Rnp::capabilityFilters()
+{
+    QFETCH(QString, filter);
+    QFETCH(QString, value);
+    QFETCH(QStringList, expected);
+
+    rnp_ffi_t ffi = nullptr;
+    QCOMPARE(rnp_ffi_create(&ffi, RNP_KEYSTORE_GPG, RNP_KEYSTORE_GPG), rnp_result_t(RNP_SUCCESS));
+    rnp_key_handle_t rsa = nullptr;
+    QCOMPARE(rnp_generate_key_rsa(ffi, 2048, 2048, "RSA <rsa@example.invalid>", nullptr, &rsa),
+             rnp_result_t(RNP_SUCCESS));
+    rnp_key_handle_t ed25519 = nullptr;
+    QCOMPARE(rnp_generate_key_25519(ffi, "Ed25519 <ed25519@example.invalid>", nullptr,
+                                    &ed25519),
+             rnp_result_t(RNP_SUCCESS));
+    QString contactId;
+    QStringList contact;
+    const QByteArray data = exportedKey(RNP_KEY_EXPORT_PUBLIC, &contactId, &contact);
+    QVERIFY(!data.isEmpty());
+    rnp_input_t in = nullptr;
+    QCOMPARE(rnp_input_from_memory(&in, (const uint8_t*)data.data(), data.length(), false),
+             rnp_result_t(RNP_SUCCESS));
+    QCOMPARE(rnp_import_keys(ffi, in, RNP_LOAD_SAVE_PUBLIC_KEYS, nullptr),
+             rnp_result_t(RNP_SUCCESS));
+    rnp_input_destroy(in);
+
+    QMap<QString, QString> fingerprints;
+    rnp_key_handle_t sub = nullptr;
+    fingerprints.insert(QStringLiteral("rsa"), fingerprint(rsa));
+    QCOMPARE(rnp_key_get_subkey_at(rsa, 0, &sub), rnp_result_t(RNP_SUCCESS));
+    fingerprints.insert(QStringLiteral("rsa sub"), fingerprint(sub));
+    rnp_key_handle_destroy(sub);
+    fingerprints.insert(QStringLiteral("ed25519"), fingerprint(ed25519));
+    QCOMPARE(rnp_key_get_subkey_at(ed25519, 0, &sub), rnp_result_t(RNP_SUCCESS));
+    fingerprints.insert(QStringLiteral("cv25519"), fingerprint(sub));
+    rnp_key_handle_destroy(sub);
+    fingerprints.insert(QStringLiteral("contact"), contact.at(0));
+    fingerprints.insert(QStringLiteral("contact sub"), contact.at(1));
+    rnp_key_handle_destroy(ed25519);
+    rnp_key_handle_destroy(rsa);
+    QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/pubring.gpg"),
+                        RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_PUBLIC_KEYS));
+    QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/secring.gpg"),
+                        RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_SECRET_KEYS));
+    rnp_ffi_destroy(ffi);
+
+    Plugin plugin;
+    Secrets::Secret::FilterData filterData;
+    filterData.insert(filter, value);
+    QVector<Secrets::Secret::Identifier> identifiers;
+    QCOMPARE(plugin.findSecrets(QStringLiteral("import"), filterData,
+                                Secrets::StoragePlugin::OperatorAnd, &identifiers).code(),
+             Secrets::Result::Succeeded);
+    QStringList found;
+    for (const Secrets::Secret::Identifier &identifier : identifiers)
+        found << identifier.name();
+    found.sort();
+    QStringList wanted;
+    for (const QString &label : expected)
+        wanted << fingerprints.value(label);
+    wanted.sort();
+    QCOMPARE(found, wanted);
 }
 
 QTEST_GUILESS_MAIN(tst_Rnp)
