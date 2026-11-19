@@ -43,3 +43,8 @@ target_link_libraries(tst_rnpplugin
 add_test(NAME tst_rnpplugin COMMAND dbus-run-session -- ${CMAKE_COMMAND} -E env
 	RNP_TEST_PLUGIN=$<TARGET_FILE:sailfishcrypto-rnp-test>
 	$<TARGET_FILE:tst_rnpplugin>)
+
+install(TARGETS sailfishcrypto-rnp-test
+	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/Sailfish/Crypto/)
+install(TARGETS tst_rnp tst_rnpplugin
+	RUNTIME DESTINATION /opt/tests/sailfish-crypto-plugins)
