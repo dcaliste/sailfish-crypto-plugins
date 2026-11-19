@@ -11,6 +11,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QSaveFile>
 #include <QDateTime>
 #include <QJsonDocument>
@@ -171,7 +172,9 @@ QStringList Rnp::importKeys(const QByteArray &data)
         qCWarning(lcRnp) << "cannot create memory buffer from data." << res;
         goto out;
     }
-    if ((res = rnp_import_keys(m_ffi, in, RNP_LOAD_SAVE_PERMISSIVE, &json))) {
+    if ((res = rnp_import_keys(m_ffi, in, RNP_LOAD_SAVE_PUBLIC_KEYS
+                               | RNP_LOAD_SAVE_SECRET_KEYS | RNP_LOAD_SAVE_PERMISSIVE,
+                               &json))) {
         qCWarning(lcRnp) << "cannot import keys from data." << res;
         goto out;
     }
@@ -179,7 +182,11 @@ QStringList Rnp::importKeys(const QByteArray &data)
     for (const QJsonValue &key : keys.object()["keys"].toArray()) {
         
         qCDebug(lcRnp) << "import" << key.toObject()["fingerprint"];
+        ret << key.toObject()["fingerprint"].toString();
     }
+    // The daemon does not destroy its plugins, so the keyrings are saved now.
+    if (!ret.isEmpty() && (!m_publicKeyring->save() || !m_secretKeyring->save()))
+        ret.clear();
  out:
     if (in)
         rnp_input_destroy(in);
@@ -819,8 +826,15 @@ bool Rnp::Keyring::save()
         const QString path = m_level == PUBLIC
             ? m_rnp->m_publicKeyPath : m_rnp->m_secretKeyPath;
         const bool exists = QFile::exists(path);
+        // A missing directory is created owner-only, as the file is.
+        const QString home = QFileInfo(path).absolutePath();
+        const bool created = !QDir(home).exists();
         QSaveFile file(path);
         if (res != RNP_SUCCESS
+            || (created && (!QDir().mkdir(home)
+                            || !QFile::setPermissions(home, QFileDevice::ReadOwner
+                                                      | QFileDevice::WriteOwner
+                                                      | QFileDevice::ExeOwner)))
             || !file.open(QIODevice::WriteOnly)
             || (!exists && !file.setPermissions(QFileDevice::ReadOwner
                                                 | QFileDevice::WriteOwner))

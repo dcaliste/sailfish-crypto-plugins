@@ -464,8 +464,25 @@ Result RnpFfi::importAndStoreKey(const QByteArray &data,
                                  Key *keyMetadata)
 {
     Q_UNUSED(keyTemplate);
+    Q_UNUSED(passphrase);
+    Q_UNUSED(customParameters);
 
-    // return importKey(data, passphrase, customParameters, keyMetadata, QString());
+    // Saving would replace a keyring file that could not be read.
+    if (!m_rnp->publicKeyring().isValid() || !m_rnp->secretKeyring().isValid()) {
+        return Result(Result::StorageError,
+                      QStringLiteral("failed to open keyrings at path '%1' and '%2'.")
+                      .arg(m_rnp->publicKeyring().path())
+                      .arg(m_rnp->secretKeyring().path()));
+    }
+
+    const QStringList fingerprints = m_rnp->importKeys(data);
+    if (fingerprints.isEmpty()) {
+        return Result(Result::CryptoPluginKeyImportError,
+                      QStringLiteral("cannot import keys from data."));
+    }
+    *keyMetadata = m_rnp->publicKeyring().fromFingerprint(fingerprints.first())
+        .toCryptoKey(name());
+
     return Result();
 }
 
