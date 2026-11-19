@@ -708,6 +708,7 @@ Sailfish::Crypto::Key Rnp::Key::toCryptoKey(const QString &pluginName) const
                         emails << email;
                     rnp_buffer_destroy(data);
                 }
+                rnp_uid_handle_destroy(uid);
             }
         }
     }
