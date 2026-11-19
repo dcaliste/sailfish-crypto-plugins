@@ -105,6 +105,8 @@ private slots:
     void importCreatesHome();
     void capabilityFilters_data();
     void capabilityFilters();
+    void keyAlgorithm_data();
+    void keyAlgorithm();
 
 private:
     QByteArray exportedKey(uint flags, QString *id, QStringList *fingerprints);
@@ -901,6 +903,66 @@ void tst_Rnp::capabilityFilters()
         wanted << fingerprints.value(label);
     wanted.sort();
     QCOMPARE(found, wanted);
+}
+
+void tst_Rnp::keyAlgorithm_data()
+{
+    QTest::addColumn<QByteArray>("primaryAlg");
+    QTest::addColumn<QByteArray>("subkeyAlg");
+    QTest::addColumn<QByteArray>("primaryCurve");
+    QTest::addColumn<QByteArray>("subkeyCurve");
+    QTest::addColumn<int>("primaryAlgorithm");
+    QTest::addColumn<int>("subkeyAlgorithm");
+
+    QTest::newRow("RSA") << QByteArray("RSA") << QByteArray("RSA")
+                         << QByteArray() << QByteArray()
+                         << int(Crypto::CryptoManager::AlgorithmRsa)
+                         << int(Crypto::CryptoManager::AlgorithmRsa);
+    QTest::newRow("Ed25519") << QByteArray("EDDSA") << QByteArray("ECDH")
+                             << QByteArray() << QByteArray("Curve25519")
+                             << int(Crypto::CryptoManager::AlgorithmEdDsa)
+                             << int(Crypto::CryptoManager::AlgorithmEcDh);
+    QTest::newRow("NIST P-256") << QByteArray("ECDSA") << QByteArray("ECDH")
+                                << QByteArray("NIST P-256") << QByteArray("NIST P-256")
+                                << int(Crypto::CryptoManager::AlgorithmEcDsa)
+                                << int(Crypto::CryptoManager::AlgorithmEcDh);
+}
+
+void tst_Rnp::keyAlgorithm()
+{
+    QFETCH(QByteArray, primaryAlg);
+    QFETCH(QByteArray, subkeyAlg);
+    QFETCH(QByteArray, primaryCurve);
+    QFETCH(QByteArray, subkeyCurve);
+    QFETCH(int, primaryAlgorithm);
+    QFETCH(int, subkeyAlgorithm);
+
+    rnp_ffi_t ffi = nullptr;
+    QCOMPARE(rnp_ffi_create(&ffi, RNP_KEYSTORE_GPG, RNP_KEYSTORE_GPG), rnp_result_t(RNP_SUCCESS));
+    const uint32_t bits = primaryAlg == "RSA" ? 2048 : 0;
+    rnp_key_handle_t primary = nullptr;
+    QCOMPARE(rnp_generate_key_ex(ffi, primaryAlg.constData(), subkeyAlg.constData(), bits, bits,
+                                 primaryCurve.isEmpty() ? nullptr : primaryCurve.constData(),
+                                 subkeyCurve.isEmpty() ? nullptr : subkeyCurve.constData(),
+                                 "Test <test@example.invalid>", nullptr, &primary),
+             rnp_result_t(RNP_SUCCESS));
+    rnp_key_handle_t sub = nullptr;
+    QCOMPARE(rnp_key_get_subkey_at(primary, 0, &sub), rnp_result_t(RNP_SUCCESS));
+    const QString primaryFp = fingerprint(primary);
+    const QString subkeyFp = fingerprint(sub);
+    rnp_key_handle_destroy(sub);
+    rnp_key_handle_destroy(primary);
+    QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/pubring.gpg"),
+                        RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_PUBLIC_KEYS));
+    rnp_ffi_destroy(ffi);
+
+    Plugin plugin;
+    const Crypto::Key key = plugin.m_rnp.publicKeyring().fromFingerprint(primaryFp)
+        .toCryptoKey(plugin.name());
+    QCOMPARE((int)key.algorithm(), primaryAlgorithm);
+    const Crypto::Key subkey = plugin.m_rnp.publicKeyring().fromFingerprint(subkeyFp)
+        .toCryptoKey(plugin.name());
+    QCOMPARE((int)subkey.algorithm(), subkeyAlgorithm);
 }
 
 QTEST_GUILESS_MAIN(tst_Rnp)

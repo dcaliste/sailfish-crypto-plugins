@@ -739,6 +739,12 @@ Sailfish::Crypto::Key Rnp::Key::toCryptoKey(const QString &pluginName) const
             output.setAlgorithm(Sailfish::Crypto::CryptoManager::AlgorithmRsa);
         else if (!strcmp(algo, "DSA"))
             output.setAlgorithm(Sailfish::Crypto::CryptoManager::AlgorithmDsa);
+        else if (!strcmp(algo, "EDDSA"))
+            output.setAlgorithm(Sailfish::Crypto::CryptoManager::AlgorithmEdDsa);
+        else if (!strcmp(algo, "ECDSA"))
+            output.setAlgorithm(Sailfish::Crypto::CryptoManager::AlgorithmEcDsa);
+        else if (!strcmp(algo, "ECDH"))
+            output.setAlgorithm(Sailfish::Crypto::CryptoManager::AlgorithmEcDh);
         else
             output.setAlgorithm(Sailfish::Crypto::CryptoManager::AlgorithmUnknown);
         rnp_buffer_destroy(algo);
