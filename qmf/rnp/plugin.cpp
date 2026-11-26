@@ -76,7 +76,7 @@ QMailCrypto::VerificationResult QMailCryptoRNP::verifySignature(const QMailMessa
     QMailCrypto::VerificationResult result;
     result.engine = QStringLiteral("librnp.so");
 
-    Rnp rnp(Rnp::GPG_COMPAT);
+    Rnp rnp(Rnp::RNP_NATIVE);
     const QList<Rnp::Signature> sigs = rnp.verify(canonicalizeStr(body.undecodedData()),
                                                   signature.body().data(QMailMessageBody::Decoded));
     result.summary = sigs.length() > 0 ? QMailCrypto::SignatureValid : QMailCrypto::BadSignature;
@@ -97,7 +97,7 @@ QMailCrypto::SignatureResult QMailCryptoRNP::sign(QMailMessagePartContainer *par
         return QMailCrypto::UnknownError;
     }
 
-    Rnp rnp(Rnp::GPG_COMPAT);
+    Rnp rnp(Rnp::RNP_NATIVE);
 
     /* Fetch the secret keys. */
     Rnp::Key signers[keys.length() + 1];
@@ -187,7 +187,7 @@ QMailCrypto::DecryptionResult QMailCryptoRNP::decrypt(QMailMessagePartContainer 
     if (!body.contentAvailable())
         return QMailCrypto::DecryptionResult();
 
-    Rnp rnp(Rnp::GPG_COMPAT);
+    Rnp rnp(Rnp::RNP_NATIVE);
     const QByteArray decData = rnp.decrypt(body.body().data(QMailMessageBody::Decoded));
     QMailCrypto::DecryptionResult result;
     result.engine = QStringLiteral("librnp.so");

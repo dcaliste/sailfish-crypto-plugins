@@ -43,6 +43,7 @@ class Q_DECL_EXPORT Rnp
         ~Key();
 
         bool isValid() const;
+        bool hasSecret() const;
         QString keyid() const;
         QString fingerprint() const;
         QStringList fingerprints() const;
@@ -72,6 +73,7 @@ class Q_DECL_EXPORT Rnp
         Key key(const Sailfish::Crypto::Key &key);
         Key fromFingerprint(const QString &fp);
         bool remove(Key &key);
+        bool save();
     private:
         bool m_valid = false;
         bool m_modified = false;

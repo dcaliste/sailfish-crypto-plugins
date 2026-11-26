@@ -22,7 +22,7 @@ public:
         : QObject(parent)
         , RnpKeys(&m_rnp)
         , RnpFfi(&m_rnp)
-        , m_rnp(Rnp::GPG_COMPAT)
+        , m_rnp(Rnp::RNP_NATIVE)
     {
         qCDebug(lcSailfishCryptoPlugin) << "New RNP plugin" << &m_rnp;
     }
