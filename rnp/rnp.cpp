@@ -10,6 +10,9 @@
 #include <rnp/rnp_err.h>
 
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QSaveFile>
 #include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -169,7 +172,9 @@ QStringList Rnp::importKeys(const QByteArray &data)
         qCWarning(lcRnp) << "cannot create memory buffer from data." << res;
         goto out;
     }
-    if ((res = rnp_import_keys(m_ffi, in, RNP_LOAD_SAVE_PERMISSIVE, &json))) {
+    if ((res = rnp_import_keys(m_ffi, in, RNP_LOAD_SAVE_PUBLIC_KEYS
+                               | RNP_LOAD_SAVE_SECRET_KEYS | RNP_LOAD_SAVE_PERMISSIVE,
+                               &json))) {
         qCWarning(lcRnp) << "cannot import keys from data." << res;
         goto out;
     }
@@ -177,7 +182,11 @@ QStringList Rnp::importKeys(const QByteArray &data)
     for (const QJsonValue &key : keys.object()["keys"].toArray()) {
         
         qCDebug(lcRnp) << "import" << key.toObject()["fingerprint"];
+        ret << key.toObject()["fingerprint"].toString();
     }
+    // The daemon does not destroy its plugins, so the keyrings are saved now.
+    if (!ret.isEmpty() && (!m_publicKeyring->save() || !m_secretKeyring->save()))
+        ret.clear();
  out:
     if (in)
         rnp_input_destroy(in);
@@ -576,6 +585,12 @@ bool Rnp::Key::isValid() const
     return m_key != nullptr;
 }
 
+bool Rnp::Key::hasSecret() const
+{
+    bool secret = false;
+    return m_key && rnp_key_have_secret(m_key, &secret) == RNP_SUCCESS && secret;
+}
+
 QString Rnp::Key::keyid() const
 {
     QString id;
@@ -748,6 +763,12 @@ Rnp::Keyring::Keyring(const Rnp *rnp, Rnp::Keyring::Level level)
         format = RNP_KEYSTORE_GPG;
     }
 
+    // A missing keyring file is an empty keyring.
+    if (!QFile::exists(level == PUBLIC ? rnp->m_publicKeyPath : rnp->m_secretKeyPath)) {
+        m_valid = true;
+        return;
+    }
+
     rnp_input_t keyin = nullptr;
     if ((level == PUBLIC
          && rnp_input_from_path(&keyin, rnp->m_publicKeyPath.toUtf8().data()))
@@ -767,28 +788,69 @@ Rnp::Keyring::Keyring(const Rnp *rnp, Rnp::Keyring::Level level)
         qCWarning(lcRnp) << "cannot load keyring, error code:" << res;
 }
 
+static bool appendTo(void *app_ctx, const void *buf, size_t len)
+{
+    ((QByteArray*)app_ctx)->append((const char*)buf, len);
+    return true;
+}
+
 Rnp::Keyring::~Keyring()
 {
     if (m_modified) {
-        const char *format = RNP_KEYSTORE_KBX;
-        if (m_rnp->m_format == GPG_COMPAT) {
-            format = RNP_KEYSTORE_GPG;
-        }
-
-        uint32_t flags = m_level == PUBLIC ? RNP_LOAD_SAVE_PUBLIC_KEYS : RNP_LOAD_SAVE_SECRET_KEYS;
-        rnp_output_t keyout = nullptr;
-        if ((m_level == PUBLIC
-             && rnp_output_to_path(&keyout, m_rnp->m_publicKeyPath.toUtf8().data()) == RNP_SUCCESS)
-            || (m_level == SECRET
-                && rnp_output_to_path(&keyout, m_rnp->m_secretKeyPath.toUtf8().data()) == RNP_SUCCESS)) {
-            rnp_save_keys(m_rnp->m_ffi, format, keyout, flags);
-            rnp_output_destroy(keyout);
-        }
+        save();
     }
     if (m_valid) {
         uint32_t flags = m_level == PUBLIC ? RNP_KEY_UNLOAD_PUBLIC : RNP_KEY_UNLOAD_SECRET;
         rnp_unload_keys(m_rnp->m_ffi, flags);
     }
+}
+
+bool Rnp::Keyring::save()
+{
+    const char *format = RNP_KEYSTORE_KBX;
+    if (m_rnp->m_format == GPG_COMPAT) {
+        format = RNP_KEYSTORE_GPG;
+    }
+
+    uint32_t flags = m_level == PUBLIC ? RNP_LOAD_SAVE_PUBLIC_KEYS : RNP_LOAD_SAVE_SECRET_KEYS;
+    QByteArray data;
+    rnp_output_t keyout = nullptr;
+    bool saved = false;
+    if (rnp_output_to_callback(&keyout, appendTo, nullptr, &data) == RNP_SUCCESS) {
+        const rnp_result_t res = rnp_save_keys(m_rnp->m_ffi, format, keyout, flags);
+        rnp_output_destroy(keyout);
+        // librnp takes a short write to a file for success, so the file
+        // is written here; on failure it stays as it was. commit() in
+        // Qt 5.6 does not see a failed flush, so flush() is checked.
+        // A new file is private, as librnp creates it.
+        const QString path = m_level == PUBLIC
+            ? m_rnp->m_publicKeyPath : m_rnp->m_secretKeyPath;
+        const bool exists = QFile::exists(path);
+        // A missing directory is created owner-only, as the file is.
+        const QString home = QFileInfo(path).absolutePath();
+        const bool created = !QDir(home).exists();
+        QSaveFile file(path);
+        if (res != RNP_SUCCESS
+            || (created && (!QDir().mkdir(home)
+                            || !QFile::setPermissions(home, QFileDevice::ReadOwner
+                                                      | QFileDevice::WriteOwner
+                                                      | QFileDevice::ExeOwner)))
+            || !file.open(QIODevice::WriteOnly)
+            || (!exists && !file.setPermissions(QFileDevice::ReadOwner
+                                                | QFileDevice::WriteOwner))
+            || file.write(data) != data.size()
+            || !file.flush()
+            || !file.commit()) {
+            qCWarning(lcRnp) << "cannot save keyring" << file.fileName() << res
+                             << file.errorString();
+        } else {
+            saved = true;
+        }
+    }
+    if (saved)
+        m_modified = false;
+
+    return saved;
 }
 
 bool Rnp::Keyring::isValid() const
