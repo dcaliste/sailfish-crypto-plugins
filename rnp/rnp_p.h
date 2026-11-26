@@ -50,6 +50,7 @@ class Q_DECL_EXPORT Rnp
         bool remove();
         Sailfish::Crypto::Key toCryptoKey(const QString &pluginName) const;
     private:
+        rnp_ffi_t m_ffi = nullptr;
         rnp_key_handle_t m_key = nullptr;
         rnp_key_handle_t m_primary = nullptr;
     };

@@ -79,9 +79,15 @@ private slots:
     void loadPlugin();
     void emptyKeyrings();
     void generatedKey();
+    void subkeyReference();
+    void removeKey();
+    void decryptSigned_data();
+    void decryptSigned();
+    void verifySubkeySignature();
 
 private:
-    bool saveKeyring(rnp_ffi_t ffi, const QString &fileName, uint32_t flags);
+    bool saveKeyring(rnp_ffi_t ffi, const QString &fileName, const char *format, uint32_t flags);
+    bool generateKey(QString *id, QStringList *fingerprints);
 
     QScopedPointer<QTemporaryDir> m_home;
 };
@@ -100,15 +106,41 @@ void tst_Rnp::cleanup()
     m_home.reset();
 }
 
-bool tst_Rnp::saveKeyring(rnp_ffi_t ffi, const QString &fileName, uint32_t flags)
+bool tst_Rnp::saveKeyring(rnp_ffi_t ffi, const QString &fileName, const char *format,
+                          uint32_t flags)
 {
-    const QString path = m_home->path() + QStringLiteral("/.gnupg/") + fileName;
+    const QString path = m_home->path() + QLatin1Char('/') + fileName;
     rnp_output_t out = nullptr;
     if (rnp_output_to_path(&out, path.toLocal8Bit().constData()) != RNP_SUCCESS)
         return false;
-    const rnp_result_t res = rnp_save_keys(ffi, RNP_KEYSTORE_GPG, out, flags);
+    const rnp_result_t res = rnp_save_keys(ffi, format, out, flags);
     rnp_output_destroy(out);
     return res == RNP_SUCCESS;
+}
+
+// Writes keyrings with a new key to ~/.gnupg.
+bool tst_Rnp::generateKey(QString *id, QStringList *fingerprints)
+{
+    rnp_ffi_t ffi = nullptr;
+    if (rnp_ffi_create(&ffi, RNP_KEYSTORE_GPG, RNP_KEYSTORE_GPG) != RNP_SUCCESS)
+        return false;
+    rnp_key_handle_t primary = nullptr;
+    rnp_key_handle_t sub = nullptr;
+    bool ok = rnp_generate_key_rsa(ffi, 2048, 2048, "Test <test@example.invalid>",
+                                   nullptr, &primary) == RNP_SUCCESS
+        && rnp_key_get_subkey_at(primary, 0, &sub) == RNP_SUCCESS;
+    if (ok) {
+        *id = keyid(primary);
+        *fingerprints = QStringList() << fingerprint(primary) << fingerprint(sub);
+        ok = saveKeyring(ffi, QStringLiteral(".gnupg/pubring.gpg"),
+                         RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_PUBLIC_KEYS)
+            && saveKeyring(ffi, QStringLiteral(".gnupg/secring.gpg"),
+                           RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_SECRET_KEYS);
+    }
+    rnp_key_handle_destroy(sub);
+    rnp_key_handle_destroy(primary);
+    rnp_ffi_destroy(ffi);
+    return ok;
 }
 
 void tst_Rnp::loadPlugin()
@@ -130,8 +162,10 @@ void tst_Rnp::emptyKeyrings()
 {
     rnp_ffi_t ffi = nullptr;
     QCOMPARE(rnp_ffi_create(&ffi, RNP_KEYSTORE_GPG, RNP_KEYSTORE_GPG), rnp_result_t(RNP_SUCCESS));
-    QVERIFY(saveKeyring(ffi, QStringLiteral("pubring.gpg"), RNP_LOAD_SAVE_PUBLIC_KEYS));
-    QVERIFY(saveKeyring(ffi, QStringLiteral("secring.gpg"), RNP_LOAD_SAVE_SECRET_KEYS));
+    QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/pubring.gpg"),
+                        RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_PUBLIC_KEYS));
+    QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/secring.gpg"),
+                        RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_SECRET_KEYS));
     rnp_ffi_destroy(ffi);
 
     Plugin plugin;
@@ -142,21 +176,9 @@ void tst_Rnp::emptyKeyrings()
 
 void tst_Rnp::generatedKey()
 {
-    rnp_ffi_t ffi = nullptr;
-    QCOMPARE(rnp_ffi_create(&ffi, RNP_KEYSTORE_GPG, RNP_KEYSTORE_GPG), rnp_result_t(RNP_SUCCESS));
-    rnp_key_handle_t primary = nullptr;
-    QCOMPARE(rnp_generate_key_rsa(ffi, 2048, 2048, "Test <test@example.invalid>",
-                                  nullptr, &primary),
-             rnp_result_t(RNP_SUCCESS));
-    rnp_key_handle_t sub = nullptr;
-    QCOMPARE(rnp_key_get_subkey_at(primary, 0, &sub), rnp_result_t(RNP_SUCCESS));
-    const QString id = keyid(primary);
-    const QStringList fingerprints = QStringList() << fingerprint(primary) << fingerprint(sub);
-    rnp_key_handle_destroy(sub);
-    rnp_key_handle_destroy(primary);
-    QVERIFY(saveKeyring(ffi, QStringLiteral("pubring.gpg"), RNP_LOAD_SAVE_PUBLIC_KEYS));
-    QVERIFY(saveKeyring(ffi, QStringLiteral("secring.gpg"), RNP_LOAD_SAVE_SECRET_KEYS));
-    rnp_ffi_destroy(ffi);
+    QString id;
+    QStringList fingerprints;
+    QVERIFY(generateKey(&id, &fingerprints));
 
     Plugin plugin;
     QStringList names;
@@ -166,6 +188,153 @@ void tst_Rnp::generatedKey()
     QStringList secrets;
     QCOMPARE(plugin.secretNames(id, &secrets).code(), Secrets::Result::Succeeded);
     QCOMPARE(secrets, fingerprints);
+}
+
+void tst_Rnp::subkeyReference()
+{
+    QString id;
+    QStringList fingerprints;
+    QVERIFY(generateKey(&id, &fingerprints));
+
+    Plugin plugin;
+    const Crypto::Key reference(fingerprints.at(1), id, plugin.name());
+    Rnp::Key key = plugin.m_rnp.publicKeyring().key(id);
+    key = plugin.m_rnp.publicKeyring().key(reference);
+    QCOMPARE(key.fingerprint(), fingerprints.at(1));
+    QCOMPARE(key.keyid(), id);
+}
+
+void tst_Rnp::removeKey()
+{
+    QString id;
+    QStringList fingerprints;
+    QVERIFY(generateKey(&id, &fingerprints));
+
+    Plugin plugin;
+    QCOMPARE(plugin.removeSecret(id, fingerprints.at(1)).code(), Secrets::Result::Succeeded);
+    QStringList secrets;
+    QCOMPARE(plugin.secretNames(id, &secrets).code(), Secrets::Result::Succeeded);
+    QCOMPARE(secrets, QStringList() << fingerprints.at(0));
+
+    QCOMPARE(plugin.removeSecret(id, QString()).code(), Secrets::Result::Succeeded);
+    QStringList names;
+    QCOMPARE(plugin.collectionNames(&names).code(), Secrets::Result::Succeeded);
+    QCOMPARE(names, QStringList() << QStringLiteral("import"));
+}
+
+void tst_Rnp::decryptSigned_data()
+{
+    QTest::addColumn<uint>("removal");
+    QTest::addColumn<int>("status");
+
+    QTest::newRow("signer with public key") << uint(RNP_KEY_REMOVE_SECRET)
+                                            << int(Rnp::Signature::VALID);
+    QTest::newRow("unknown signer")
+        << uint(RNP_KEY_REMOVE_PUBLIC | RNP_KEY_REMOVE_SECRET)
+        << int(Rnp::Signature::KEY_NOT_FOUND);
+}
+
+// A message to a stored key, signed by a key whose secret part, or
+// all of it, is removed from the keyrings.
+void tst_Rnp::decryptSigned()
+{
+    QFETCH(uint, removal);
+    QFETCH(int, status);
+
+    rnp_ffi_t ffi = nullptr;
+    QCOMPARE(rnp_ffi_create(&ffi, RNP_KEYSTORE_GPG, RNP_KEYSTORE_GPG), rnp_result_t(RNP_SUCCESS));
+    rnp_key_handle_t recipient = nullptr;
+    QCOMPARE(rnp_generate_key_rsa(ffi, 2048, 2048, "Recipient <recipient@example.invalid>",
+                                  nullptr, &recipient),
+             rnp_result_t(RNP_SUCCESS));
+    rnp_key_handle_t signer = nullptr;
+    QCOMPARE(rnp_generate_key_rsa(ffi, 2048, 0, "Signer <signer@example.invalid>",
+                                  nullptr, &signer),
+             rnp_result_t(RNP_SUCCESS));
+
+    const QByteArray plaintext("signed and encrypted");
+    rnp_input_t in = nullptr;
+    QCOMPARE(rnp_input_from_memory(&in, (const uint8_t*)plaintext.data(),
+                                   plaintext.length(), false),
+             rnp_result_t(RNP_SUCCESS));
+    rnp_output_t out = nullptr;
+    QCOMPARE(rnp_output_to_memory(&out, 0), rnp_result_t(RNP_SUCCESS));
+    rnp_op_encrypt_t op = nullptr;
+    QCOMPARE(rnp_op_encrypt_create(&op, ffi, in, out), rnp_result_t(RNP_SUCCESS));
+    QCOMPARE(rnp_op_encrypt_add_recipient(op, recipient), rnp_result_t(RNP_SUCCESS));
+    QCOMPARE(rnp_op_encrypt_add_signature(op, signer, nullptr), rnp_result_t(RNP_SUCCESS));
+    QCOMPARE(rnp_op_encrypt_execute(op), rnp_result_t(RNP_SUCCESS));
+    uint8_t *buf = nullptr;
+    size_t len = 0;
+    QCOMPARE(rnp_output_memory_get_buf(out, &buf, &len, false), rnp_result_t(RNP_SUCCESS));
+    const QByteArray message((char*)buf, len);
+    rnp_op_encrypt_destroy(op);
+    rnp_output_destroy(out);
+    rnp_input_destroy(in);
+
+    const QString signerId = keyid(signer);
+    QCOMPARE(rnp_key_remove(signer, removal), rnp_result_t(RNP_SUCCESS));
+    rnp_key_handle_destroy(signer);
+    rnp_key_handle_destroy(recipient);
+    QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/pubring.gpg"),
+                        RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_PUBLIC_KEYS));
+    QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/secring.gpg"),
+                        RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_SECRET_KEYS));
+    rnp_ffi_destroy(ffi);
+
+    Plugin plugin;
+    QList<Rnp::Signature> signatures;
+    QCOMPARE(plugin.m_rnp.decrypt(message, &signatures), plaintext);
+    QCOMPARE(signatures.size(), 1);
+    QCOMPARE(int(signatures.at(0).status), status);
+    QCOMPARE(signatures.at(0).keyid, signerId);
+}
+
+// A signature by a signing subkey, verified with a reference to its primary key.
+void tst_Rnp::verifySubkeySignature()
+{
+    rnp_ffi_t ffi = nullptr;
+    QCOMPARE(rnp_ffi_create(&ffi, RNP_KEYSTORE_GPG, RNP_KEYSTORE_GPG), rnp_result_t(RNP_SUCCESS));
+    rnp_key_handle_t primary = nullptr;
+    QCOMPARE(rnp_generate_key_rsa(ffi, 2048, 0, "Signer <signer@example.invalid>",
+                                  nullptr, &primary),
+             rnp_result_t(RNP_SUCCESS));
+    rnp_op_generate_t generate = nullptr;
+    QCOMPARE(rnp_op_generate_subkey_create(&generate, ffi, primary, "RSA"),
+             rnp_result_t(RNP_SUCCESS));
+    QCOMPARE(rnp_op_generate_set_bits(generate, 2048), rnp_result_t(RNP_SUCCESS));
+    QCOMPARE(rnp_op_generate_add_usage(generate, "sign"), rnp_result_t(RNP_SUCCESS));
+    QCOMPARE(rnp_op_generate_execute(generate), rnp_result_t(RNP_SUCCESS));
+    rnp_key_handle_t sub = nullptr;
+    QCOMPARE(rnp_op_generate_get_key(generate, &sub), rnp_result_t(RNP_SUCCESS));
+    rnp_op_generate_destroy(generate);
+    const QString id = keyid(primary);
+    const QString primaryFingerprint = fingerprint(primary);
+    const QString subFingerprint = fingerprint(sub);
+    rnp_key_handle_destroy(sub);
+    rnp_key_handle_destroy(primary);
+    QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/pubring.gpg"),
+                        RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_PUBLIC_KEYS));
+    QVERIFY(saveKeyring(ffi, QStringLiteral(".gnupg/secring.gpg"),
+                        RNP_KEYSTORE_GPG, RNP_LOAD_SAVE_SECRET_KEYS));
+    rnp_ffi_destroy(ffi);
+
+    Plugin plugin;
+    const QByteArray data("signed by a subkey");
+    QByteArray signature;
+    QCOMPARE(plugin.sign(data, Crypto::Key(subFingerprint, id, plugin.name()),
+                         Crypto::CryptoManager::SignaturePaddingNone,
+                         Crypto::CryptoManager::DigestUnknown,
+                         QVariantMap(), &signature).code(),
+             Crypto::Result::Succeeded);
+
+    Crypto::CryptoManager::VerificationStatus status;
+    QCOMPARE(plugin.verify(signature, data, Crypto::Key(primaryFingerprint, id, plugin.name()),
+                           Crypto::CryptoManager::SignaturePaddingNone,
+                           Crypto::CryptoManager::DigestUnknown,
+                           QVariantMap(), &status).code(),
+             Crypto::Result::Succeeded);
+    QCOMPARE(int(status), int(Crypto::CryptoManager::VerificationSucceeded));
 }
 
 QTEST_GUILESS_MAIN(tst_Rnp)

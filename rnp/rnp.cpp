@@ -15,6 +15,8 @@
 #include <QJsonObject>
 #include <QJsonArray>
 
+#include <utility>
+
 #include <Crypto/Plugins/extensionplugins.h>
 #include <Secrets/secretmanager.h>
 #include <Secrets/interactionrequest.h>
@@ -290,7 +292,7 @@ static Rnp::Signature toSignature(rnp_ffi_t ffi, rnp_op_verify_signature_t vsig)
         if (rnp_key_get_primary_fprint(key, &fprint) == RNP_SUCCESS
             && rnp_locate_key(ffi, "fingerprint", fprint, &pkey) == RNP_SUCCESS) {
             char *keyid = nullptr;
-            if (rnp_key_get_keyid(key, &keyid) == RNP_SUCCESS) {
+            if (rnp_key_get_keyid(pkey, &keyid) == RNP_SUCCESS) {
                 id = QString::fromLatin1(keyid);
                 rnp_buffer_destroy(keyid);
             }
@@ -458,11 +460,17 @@ QByteArray Rnp::decrypt(const QByteArray &data, QList<Rnp::Signature> *signers) 
         qCWarning(lcRnp) << "cannot create memory buffer for output." << res;
         goto out;
     }
+    if (!m_publicKeyring)
+        m_publicKeyring = new Keyring(this, Keyring::PUBLIC);
     if (!m_secretKeyring)
         m_secretKeyring = new Keyring(this, Keyring::SECRET);
     qCDebug(lcRnp) << "Starting decrypting operation.";
     if ((res = rnp_op_verify_create(&op, m_ffi, in, out))) {
         qCWarning(lcRnp) << "cannot create a verify operation." << res;
+        goto out;
+    }
+    if ((res = rnp_op_verify_set_flags(op, RNP_VERIFY_IGNORE_SIGS_ON_DECRYPT))) {
+        qCWarning(lcRnp) << "cannot set verify flags." << res;
         goto out;
     }
     uint8_t *buf;
@@ -508,6 +516,7 @@ Rnp::Key::Key()
 Rnp::Key::Key(const Rnp *rnp, const char *key, const QString &value)
 {
     qCDebug(lcRnp) << "loading key" << key << value;
+    m_ffi = rnp->m_ffi;
     rnp_result_t res;
     if ((res = rnp_locate_key(rnp->m_ffi, key, value.toLatin1().data(), &m_key)) != RNP_SUCCESS) {
         qCWarning(lcRnp) << "key not available." << res;
@@ -525,14 +534,20 @@ Rnp::Key::Key(const Rnp *rnp, const char *key, const QString &value)
 Rnp::Key::Key(const Rnp::Key &key, size_t isub)
 {
     qCDebug(lcRnp) << "loading subkey" << isub;
+    m_ffi = key.m_ffi;
     if (key.m_primary) {
         rnp_key_get_subkey_at(key.m_primary, isub, &m_key);
-        m_primary = key.m_primary;
+        char *fp = nullptr;
+        if (rnp_key_get_fprint(key.m_primary, &fp) == RNP_SUCCESS) {
+            rnp_locate_key(m_ffi, "fingerprint", fp, &m_primary);
+            rnp_buffer_destroy(fp);
+        }
     }
 }
 
 Rnp::Key::Key(Rnp::Key &&other)
 {
+    m_ffi = other.m_ffi;
     m_key = other.m_key;
     m_primary = other.m_primary;
     other.m_key = nullptr;
@@ -541,15 +556,17 @@ Rnp::Key::Key(Rnp::Key &&other)
 
 Rnp::Key& Rnp::Key::operator=(Rnp::Key &&other)
 {
-    m_key = other.m_key;
-    m_primary = other.m_primary;
-    other.m_key = nullptr;
-    other.m_primary = nullptr;
+    // other releases the handles this key held.
+    std::swap(m_ffi, other.m_ffi);
+    std::swap(m_key, other.m_key);
+    std::swap(m_primary, other.m_primary);
     return *this;
 }
 
 Rnp::Key::~Key()
 {
+    if (m_primary && m_primary != m_key)
+        rnp_key_handle_destroy(m_primary);
     if (m_key)
         rnp_key_handle_destroy(m_key);
 }
@@ -633,6 +650,8 @@ bool Rnp::Key::remove()
     }
 
     if (rnp_key_remove(m_key, flags) == RNP_SUCCESS) {
+        if (m_primary == m_key)
+            m_primary = nullptr;
         rnp_key_handle_destroy(m_key);
         m_key = nullptr;
     }
