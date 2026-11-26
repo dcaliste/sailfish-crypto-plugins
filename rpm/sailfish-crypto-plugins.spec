@@ -8,6 +8,7 @@ URL:        https://github.com/dcaliste/sailfish-crypto-plugins
 Source0:    %{name}-%{version}.tar.bz2
 BuildRequires:  cmake
 BuildRequires:  pkgconfig(Qt5Core)
+BuildRequires:  pkgconfig(Qt5Test)
 BuildRequires:  pkgconfig(QmfClient)
 BuildRequires:  pkgconfig(sailfishsecrets)
 BuildRequires:  pkgconfig(sailfishcrypto)

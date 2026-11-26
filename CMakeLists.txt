@@ -9,6 +9,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 set(CMAKE_CXX_STANDARD 11)
 
+include(CTest)
 include(FeatureSummary)
 include(GNUInstallDirs)
 
@@ -23,5 +24,8 @@ pkg_check_modules(RNP librnp IMPORTED_TARGET REQUIRED)
 
 add_subdirectory(secrets)
 add_subdirectory(qmf)
+if(BUILD_TESTING)
+	add_subdirectory(tests)
+endif()
 
 feature_summary(WHAT ALL FATAL_ON_MISSING_REQUIRED_PACKAGES)
